@@ -1,0 +1,17 @@
+{
+  "name": "@marcisbee/rion",
+  "version": "0.1.0",
+  "tasks": {
+    "dev": "deno run --watch main.ts"
+  },
+  "exports": {
+    "./": "./src/main.ts",
+    "./test": "./src/test.ts",
+    "./test.ts": "./src/test.ts",
+    "./bench": "./src/bench.ts",
+    "./bench.ts": "./src/bench.ts"
+  },
+  "imports": {
+    "playwright": "npm:playwright@^1.56.1"
+  }
+}
