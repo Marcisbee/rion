@@ -1,5 +1,3 @@
-/// <reference lib="deno.unstable" />  // Potential future bundler APIs
-
 import path from "node:path";
 import { statSync } from "node:fs";
 import { parseArgs } from "node:util";

@@ -1,5 +1,3 @@
-/// <reference lib="deno.unstable" />
-
 import path from "node:path";
 import { statSync } from "node:fs";
 import { parseArgs } from "node:util";

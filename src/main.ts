@@ -428,23 +428,17 @@ function createTestAPI() {
       errors,
     };
 
-    window.__test_results = (window.__test_results || []).concat(result);
+    (window as any).__test_results = ((window as any).__test_results || [])
+      .concat(result);
 
     if (result.failed) {
-      window.__test_failing = true;
+      (window as any).__test_failing = true;
     }
 
     return result;
   };
 
   return api;
-}
-
-declare global {
-  interface Window {
-    __test_results?: RunResult[];
-    __test_failing?: boolean;
-  }
 }
 
 function showReport() {
