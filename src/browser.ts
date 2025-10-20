@@ -6,15 +6,6 @@ import {
   type Request,
 } from "playwright";
 
-declare global {
-  interface Window {
-    __done?: () => void;
-  }
-  interface GlobalThis {
-    __instrumentedPages?: WeakSet<Page>;
-  }
-}
-
 interface StartBrowserOptions {
   headless?: boolean;
 }
