@@ -1,8 +1,9 @@
 {
   "name": "@marcisbee/rion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "tasks": {
-    "dev": "deno run --watch main.ts"
+    "dev": "deno run --watch src/main.ts",
+    "test": "deno run -A --unstable-bundle src/test.ts --includes tests"
   },
   "exports": {
     ".": "./src/main.ts",

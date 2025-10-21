@@ -73,32 +73,182 @@ function deepEqual(a: any, b: any): boolean {
 }
 
 const assert = {
-  ok(value: any, message = "Expected value to be truthy") {
-    if (!value) throw new Error(message);
-  },
-  is(actual: any, expected: any, message?: string) {
+  equal(actual: any, expected: any, message?: string) {
     if (!Object.is(actual, expected)) {
       throw new Error(
-        message || `Expected ${format(actual)} to be ${format(expected)}`,
+        message || `Expected ${format(actual)} to equal ${format(expected)}`,
       );
     }
   },
-  equal(actual: any, expected: any, message?: string) {
+  deepEqual(actual: any, expected: any, message?: string) {
     if (!deepEqual(actual, expected)) {
       throw new Error(
         message ||
-          `Expected deep equal:\n\n${format(actual)}\n\n${format(expected)}\n`,
+          `Expected deep equal:\n${format(actual)}\n${format(expected)}`,
       );
     }
   },
-  throws(fn: () => any, message = "Expected function to throw") {
+  notEqual(actual: any, expected: any, message?: string) {
+    if (Object.is(actual, expected)) {
+      throw new Error(
+        message ||
+          `Expected ${format(actual)} not to equal ${format(expected)}`,
+      );
+    }
+  },
+  true(value: any, message?: string) {
+    if (value !== true) {
+      throw new Error(message || `Expected ${format(value)} to be true`);
+    }
+  },
+  false(value: any, message?: string) {
+    if (value !== false) {
+      throw new Error(message || `Expected ${format(value)} to be false`);
+    }
+  },
+  throws(fn: () => any, message?: string) {
     let threw = false;
     try {
       fn();
     } catch {
       threw = true;
     }
-    if (!threw) throw new Error(message);
+    if (!threw) throw new Error(message || "Expected function to throw");
+  },
+  doesNotThrow(fn: () => any, message?: string) {
+    try {
+      fn();
+    } catch (e) {
+      throw new Error(message || `Expected not to throw, but threw: ${e}`);
+    }
+  },
+  async resolves(promise: Promise<any>, message?: string) {
+    try {
+      await promise;
+    } catch (e) {
+      throw new Error(
+        message || `Expected promise to resolve, but rejected with: ${e}`,
+      );
+    }
+  },
+  async rejects(promise: Promise<any>, message?: string) {
+    let rejected = false;
+    try {
+      await promise;
+    } catch {
+      rejected = true;
+    }
+    if (!rejected) {
+      throw new Error(message || "Expected promise to reject, but resolved");
+    }
+  },
+  instanceOf(value: any, constructor: Function, message?: string) {
+    if (!(value instanceof constructor)) {
+      throw new Error(
+        message ||
+          `Expected ${format(value)} to be instance of ${constructor.name}`,
+      );
+    }
+  },
+  typeOf(value: any, type: string, message?: string) {
+    if (typeof value !== type) {
+      throw new Error(
+        message ||
+          `Expected typeof ${format(value)} to be ${type}, got ${typeof value}`,
+      );
+    }
+  },
+  exists(value: any, message?: string) {
+    if (value == null) {
+      throw new Error(message || `Expected ${format(value)} to exist`);
+    }
+  },
+  undefined(value: any, message?: string) {
+    if (value !== undefined) {
+      throw new Error(message || `Expected ${format(value)} to be undefined`);
+    }
+  },
+  closeTo(actual: number, expected: number, delta: number, message?: string) {
+    if (typeof actual !== "number" || typeof expected !== "number") {
+      throw new Error("Actual and expected must be numbers");
+    }
+    if (Math.abs(actual - expected) > delta) {
+      throw new Error(
+        message ||
+          `Expected ${actual} to be close to ${expected} within ${delta}`,
+      );
+    }
+  },
+  match(value: string, regex: RegExp, message?: string) {
+    if (typeof value !== "string") {
+      throw new Error("Value must be a string");
+    }
+    if (!regex.test(value)) {
+      throw new Error(message || `Expected ${format(value)} to match ${regex}`);
+    }
+  },
+  contains(container: any[] | string, item: any, message?: string) {
+    if (Array.isArray(container)) {
+      if (!container.includes(item)) {
+        throw new Error(
+          message ||
+            `Expected array ${format(container)} to contain ${format(item)}`,
+        );
+      }
+    } else if (typeof container === "string") {
+      if (!container.includes(item)) {
+        throw new Error(
+          message ||
+            `Expected string ${format(container)} to contain ${format(item)}`,
+        );
+      }
+    } else {
+      throw new Error("Container must be an array or string");
+    }
+  },
+  length(value: { length: number }, expected: number, message?: string) {
+    if (value.length !== expected) {
+      throw new Error(
+        message ||
+          `Expected length of ${
+            format(value)
+          } to be ${expected}, got ${value.length}`,
+      );
+    }
+  },
+  elementExists(selector: string, message?: string) {
+    const el = document.querySelector(selector);
+    if (!el) {
+      throw new Error(message || `Element not found: ${selector}`);
+    }
+  },
+  elementAttribute(
+    selector: string,
+    attribute: string,
+    expected?: string,
+    message?: string,
+  ) {
+    const el = document.querySelector(selector);
+    if (!el) {
+      throw new Error(`Element not found: ${selector}`);
+    }
+    const val = el.getAttribute(attribute);
+    if (expected === undefined) {
+      if (val === null) {
+        throw new Error(
+          message || `Expected attribute ${attribute} to exist on ${selector}`,
+        );
+      }
+    } else {
+      if (val !== expected) {
+        throw new Error(
+          message ||
+            `Expected attribute ${attribute} of ${selector} to be ${
+              format(expected)
+            }, got ${format(val)}`,
+        );
+      }
+    }
   },
   snapshot: {
     html(a: any, b: any, message?: string) {
@@ -124,65 +274,6 @@ const assert = {
             `HTML snapshot mismatch:\n\nActual:\n${actualHTML}\n\nExpected:\n${expectedHTML}\n`,
         );
       }
-    },
-  },
-  not: {
-    ok(value: any, message = "Expected value to be falsy") {
-      if (value) throw new Error(message);
-    },
-    is(actual: any, expected: any, message?: string) {
-      if (Object.is(actual, expected)) {
-        throw new Error(
-          message || `Expected ${format(actual)} NOT to be ${format(expected)}`,
-        );
-      }
-    },
-    equal(actual: any, expected: any, message?: string) {
-      if (deepEqual(actual, expected)) {
-        throw new Error(
-          message ||
-            `Expected (deep equal) ${format(actual)} NOT to equal ${
-              format(
-                expected,
-              )
-            }`,
-        );
-      }
-    },
-    throws(fn: () => any, message = "Expected function NOT to throw") {
-      let threw = false;
-      try {
-        fn();
-      } catch {
-        threw = true;
-      }
-      if (threw) throw new Error(message);
-    },
-    snapshot: {
-      html(a: any, b: any, message?: string) {
-        function toHTML(input: any): string {
-          if (typeof input === "string") return input;
-          if (input instanceof Element) return input.outerHTML;
-          if (input && typeof input === "object" && "outerHTML" in input) {
-            return (input as any).outerHTML;
-          }
-          return String(input);
-        }
-        function normalizeHTML(html: string): string {
-          let out = html.trim();
-          out = out.replace(/\s+/g, " ");
-          out = out.replace(/>\s+</g, "><");
-          return out;
-        }
-        const actualHTML = normalizeHTML(toHTML(a));
-        const otherHTML = normalizeHTML(toHTML(b));
-        if (actualHTML === otherHTML) {
-          throw new Error(
-            message ||
-              `Expected HTML snapshots to differ but both normalized to: ${actualHTML}`,
-          );
-        }
-      },
     },
   },
 };
