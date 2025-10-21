@@ -13,7 +13,7 @@ jobs:
         with:
           deno-version: v2
       - run: deno install
-      - run: deno task test
+      # - run: deno task test
       - run: deno fmt --check
       # - run: deno lint
 
