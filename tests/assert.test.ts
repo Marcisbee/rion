@@ -111,6 +111,13 @@ test("contains", () => {
   assert.throws(() => assert.contains("hello", "xyz"));
 });
 
+test("excludes", () => {
+  assert.excludes([1, 2, 3], 4);
+  assert.excludes("hello", "xyz");
+  assert.throws(() => assert.excludes([1, 2, 3], 2));
+  assert.throws(() => assert.excludes("hello", "ell"));
+});
+
 test("length", () => {
   assert.length([1, 2], 2);
   assert.length("hi", 2);

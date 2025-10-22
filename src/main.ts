@@ -206,6 +206,31 @@ const assert = {
       throw new Error("Container must be an array or string");
     }
   },
+
+  excludes(container: any[] | string, item: any, message?: string) {
+    if (Array.isArray(container)) {
+      if (container.includes(item)) {
+        throw new Error(
+          message ||
+            `Expected array ${format(container)} not to contain ${
+              format(item)
+            }`,
+        );
+      }
+    } else if (typeof container === "string") {
+      if (container.includes(item)) {
+        throw new Error(
+          message ||
+            `Expected string ${format(container)} not to contain ${
+              format(item)
+            }`,
+        );
+      }
+    } else {
+      throw new Error("Container must be an array or string");
+    }
+  },
+
   length(value: { length: number }, expected: number, message?: string) {
     if (value.length !== expected) {
       throw new Error(
