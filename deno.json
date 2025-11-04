@@ -2,15 +2,21 @@
   "name": "@marcisbee/rion",
   "version": "0.3.0",
   "tasks": {
-    "dev": "deno run --watch src/main.ts",
-    "test": "deno run -A --unstable-bundle src/test.ts --includes tests"
+    "dev": "deno run --watch src/test.ts",
+    "test": "deno run -A --unstable-bundle src/test.cli.ts --includes tests",
+    "bench": "deno run -A --unstable-bundle src/bench.cli.ts --includes bench"
   },
   "exports": {
-    ".": "./src/main.ts",
     "./test": "./src/test.ts",
     "./test.ts": "./src/test.ts",
     "./bench": "./src/bench.ts",
-    "./bench.ts": "./src/bench.ts"
+    "./bench.ts": "./src/bench.ts",
+    "./locator": "./src/locator.ts",
+    "./locator.ts": "./src/locator.ts",
+    "./test.cli": "./src/test.cli.ts",
+    "./test.cli.ts": "./src/test.cli.ts",
+    "./bench.cli": "./src/bench.cli.ts",
+    "./bench.cli.ts": "./src/bench.cli.ts"
   },
   "imports": {
     "playwright": "npm:playwright@^1.56.1"
