@@ -36,7 +36,6 @@ export async function startBrowser(
         args: [
           "--disable-infobars",
           "--disable-background-networking",
-          "--disable-background-timer-throttling",
           "--disable-cache",
           "--disable-translate",
           "--disable-sync",
@@ -69,7 +68,6 @@ export async function startBrowser(
       args: [
         "--disable-infobars",
         "--disable-background-networking",
-        "--disable-background-timer-throttling",
         "--disable-cache",
         "--disable-translate",
         "--disable-sync",
