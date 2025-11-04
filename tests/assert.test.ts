@@ -1,4 +1,4 @@
-import { assert, test } from "../src/main.ts";
+import { assert, test } from "../src/test.ts";
 
 test.before(() => {
   // Setup DOM for element tests

@@ -1,145 +1,193 @@
-import path from "node:path";
-import { statSync } from "node:fs";
-import { parseArgs } from "node:util";
-import { startBrowser } from "./browser.ts";
-import { directory } from "./files.ts";
-import { sourceMapSupport } from "./sourcemap.ts";
+/**
+ * Minimal benchmark harness with 2s timed execution.
+ */
 
-const { values, positionals } = parseArgs({
-  args: Deno.args,
-  options: {
-    ui: { type: "boolean", default: false },
-    includes: { type: "string", multiple: true },
-  },
-  strict: true,
-  allowPositionals: true,
-});
+type BenchSetup = () => any | Promise<any>;
+type BenchCode = (setupResult: any) => void | Promise<void>;
 
-const entrypoints: string[] = [];
-const includeDirs: string[] = (values.includes || []).map((p) =>
-  path.resolve(p)
-);
-
-// If positionals are provided, treat them strictly as explicit bench files.
-// Directories must be passed via --includes.
-if (positionals.length) {
-  for (const p of positionals) {
-    const abs = path.resolve(p);
-    let stats;
-    try {
-      stats = statSync(abs);
-    } catch {
-      throw new Error(`Path not found: ${p}`);
-    }
-    if (stats.isDirectory()) {
-      throw new Error(`"${p}" is a directory. Use --includes "${p}" instead.`);
-    }
-    if (!/\.bench\.tsx?$/.test(abs)) {
-      throw new Error(`"${p}" is not a .bench.ts or .bench.tsx file`);
-    }
-    const relativePath = abs.replace(
-      new RegExp(`^${Deno.cwd().replace(/\//g, "/")}\/`),
-      "",
-    );
-    entrypoints.push(relativePath);
-  }
-} else {
-  // Fallback to scanning include directories (or current working directory if none specified).
-  const roots = includeDirs.length ? includeDirs : [path.resolve("./")];
-  directory(roots, (filePath) => {
-    const relativePath = filePath.replace(
-      new RegExp(`^${Deno.cwd().replace(/\//g, "/")}\/`),
-      "",
-    );
-    entrypoints.push(relativePath);
-  }, { include: [/\.bench\.tsx?$/] });
+interface BenchEntry {
+  name: string;
+  setup: BenchSetup;
+  code: BenchCode;
 }
 
-if (!entrypoints.length) {
-  console.error("No bench entrypoints found");
-  Deno.exit(1);
+interface BenchResultMessage {
+  type: "BENCHMARK_RESULT";
+  name: string;
+  warmupIterations: number;
+  warmupTotalTimeMs: number;
+  iterations: number;
+  totalTimeMs: number;
+  avgTimePerIterMs: number;
+  opsPerSec: number;
 }
 
-/* ------------------------------- Bundling --------------------------------- */
-interface ModuleRecord {
-  entrypoint: string;
-  moduleName: string;
-  encoded: string;
-  rawCode: string;
+interface BenchErrorMessage {
+  type: "BENCHMARK_ERROR";
+  name: string;
+  message: string;
 }
 
-const modules: ModuleRecord[] = [];
-const allOutputFiles: { text(): string }[] = [];
+const benchList: BenchEntry[] = [];
 
-for (let i = 0; i < entrypoints.length; i++) {
-  const ep = entrypoints[i];
-  let bundle;
-  try {
-    bundle = await Deno.bundle({
-      entrypoints: [ep],
-      outputDir: ".",
-      platform: "browser",
-      minify: true,
-      sourcemap: "inline",
-      write: false,
-      format: "esm",
-      codeSplitting: false,
-    });
-  } catch (e) {
-    console.error(`Bundling failed for ${ep}:`, e);
-    Deno.exit(1);
-  }
-
-  if (!bundle.success) {
-    for (const err of bundle.errors) {
-      console.error(`[bundle error] ${ep}: ${err.text}`);
-    }
-    Deno.exit(1);
-  }
-
-  const file = bundle.outputFiles?.[0];
-  if (!file) {
-    console.error(`No output file produced for ${ep}`);
-    Deno.exit(1);
-  }
-
-  allOutputFiles.push(file);
-  const code = file.text();
-  const encoded = encodeURIComponent(code);
-  const moduleName = `module${i}`;
-  modules.push({ entrypoint: ep, moduleName, encoded, rawCode: code });
+export function bench(name: string, setup: BenchSetup, code: BenchCode) {
+  benchList.push({ name, setup, code });
 }
 
-const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<title>Rion bench</title>
-</head>
-<body>
-<script type="module">${await sourceMapSupport()}</script>
-<script type="module">
-const modules = ${
-  JSON.stringify(
-    modules.map((m) => ({
-      entrypoint: m.entrypoint,
-      path: `data:application/javascript,${m.encoded}`,
-    })),
-  )
+bench.exec = async (name: string): Promise<() => Promise<void>> => {
+  const entry = benchList.find((b) => b.name === name);
+  if (!entry) throw new Error(`No bench found: ${name}`);
+  const setupResult = await entry.setup();
+  return async () => {
+    await entry.code(setupResult);
+  };
 };
 
-for (const { entrypoint, path } of modules) {
-  console.log("");
-  console.log("%c" + entrypoint, "text-decoration:underline;");
-  await import(path);
-  await new Promise((r) => setTimeout(r, 50));
+async function runSingleIframe(name: string) {
+  const DURATION_MS = 2000;
+
+  let runner: () => Promise<void>;
+  try {
+    runner = await bench.exec(name);
+  } catch (err: any) {
+    const errorMsg: BenchErrorMessage = {
+      type: "BENCHMARK_ERROR",
+      name,
+      message: err?.message ?? String(err),
+    };
+    window.parent.postMessage(errorMsg, "*");
+    return;
+  }
+
+  // Fixed warmup: run exactly 10 iterations (not timed)
+  const warmupStart = performance.now();
+  for (let w = 0; w < 10; w++) {
+    await runner();
+  }
+  const warmupTotalTimeMs = performance.now() - warmupStart;
+
+  // Timed benchmark phase (2s)
+  let iterations = 0;
+  const start = performance.now();
+  while (true) {
+    await runner();
+    iterations++;
+    const now = performance.now();
+    if (now - start >= DURATION_MS) {
+      const totalTimeMs = now - start;
+      const avgTimePerIterMs = iterations === 0 ? 0 : totalTimeMs / iterations;
+      const opsPerSec = iterations / (totalTimeMs / 1000);
+      const result: BenchResultMessage = {
+        type: "BENCHMARK_RESULT",
+        name,
+        warmupIterations: 10,
+        warmupTotalTimeMs,
+        iterations,
+        totalTimeMs,
+        avgTimePerIterMs,
+        opsPerSec,
+      };
+      window.parent.postMessage(result, "*");
+      return;
+    }
+  }
 }
 
-(window.__done)?.(0);
-</script>
-</body>
-</html>`;
+async function runController() {
+  const entries = benchList.splice(0, benchList.length);
+  if (entries.length === 0) {
+    console.warn("No benchmarks registered.");
+    return;
+  }
 
-await startBrowser(html, /*watch*/ false, {
-  headless: !values.ui,
-});
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("sandbox", "allow-scripts");
+  iframe.width = "200";
+  iframe.height = "100";
+  document.body.appendChild(iframe);
+
+  const results: BenchResultMessage[] = [];
+
+  const runOne = (entry: BenchEntry): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const templateEl = document.head.querySelector("template");
+      if (!templateEl) {
+        reject(new Error("Missing <template> element"));
+        return;
+      }
+
+      const srcdoc = templateEl.innerHTML
+        .replaceAll("__MODULE_NAME__", (window as any).$$currentModule)
+        .replaceAll("__BENCH_NAME__", entry.name);
+
+      const onMessage = (e: MessageEvent) => {
+        if (e.source !== iframe.contentWindow) return;
+        const data = e.data;
+        if (!data || typeof data !== "object") return;
+
+        if (data.type === "BENCHMARK_ERROR" && data.name === entry.name) {
+          window.removeEventListener("message", onMessage);
+          reject(new Error(data.message));
+        } else if (
+          data.type === "BENCHMARK_RESULT" && data.name === entry.name
+        ) {
+          window.removeEventListener("message", onMessage);
+          results.push(data as BenchResultMessage);
+          resolve();
+        }
+      };
+
+      window.addEventListener("message", onMessage);
+      iframe.srcdoc = srcdoc;
+    });
+
+  try {
+    // Execute each benchmark (simple gray prefix like src/bench.ts)
+    for (const entry of entries) {
+      console.log("%c- " + entry.name, "color:gray;");
+      await runOne(entry);
+    }
+
+    // Sort results by throughput descending (ops/sec)
+    results.sort((a, b) => b.opsPerSec - a.opsPerSec);
+
+    console.log("");
+
+    // Collapsed per-benchmark groups similar to src/bench.ts formatting
+    for (const r of results) {
+      const headerStyle = "font-weight:bold;";
+      console.groupCollapsed(`%c${r.name}`, headerStyle);
+      console.log(
+        `ops/sec: ${Math.round(r.opsPerSec).toLocaleString()} | avg ms/iter: ${
+          r.avgTimePerIterMs.toExponential(3)
+        } | iterations: ${r.iterations.toLocaleString()}`,
+      );
+      // Additional raw metrics (uncomment if desired)
+      // console.log(
+      //   `total: ${r.totalTimeMs.toFixed(2)} ms | warmup iters: ${r.warmupIterations} | warmup total: ${r.warmupTotalTimeMs.toFixed(2)} ms`,
+      // );
+      console.groupEnd();
+    }
+  } catch (err) {
+    console.error("Benchmark run failed:", err);
+  } finally {
+    iframe.remove();
+  }
+}
+
+bench.run = async () => {
+  const singleName = (window as any).$$benchName;
+  if (singleName != null) {
+    await runSingleIframe(singleName);
+  } else {
+    await runController();
+  }
+};
+
+export type {
+  BenchCode,
+  BenchEntry,
+  BenchErrorMessage,
+  BenchResultMessage,
+  BenchSetup,
+};
