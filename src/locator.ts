@@ -142,6 +142,29 @@ class Locator {
     );
   }
 
+  /**
+   * Add a raw XPath predicate fragment to the last segment.
+   * Example: locator("tbody").predicate("not(tr)") -> //tbody[not(tr)]
+   */
+  predicate(expr: string): Locator {
+    const last = this.segments[this.segments.length - 1];
+    const nextLast = { ...last, predicates: [...last.predicates, expr] };
+    return new Locator(
+      this.root,
+      this.segments.slice(0, -1).concat(nextLast),
+      this.textMatcher,
+      this.callChain.concat(`.predicate(${JSON.stringify(expr)})`),
+    );
+  }
+
+  /**
+   * Convenience for wrapping an expression in not().
+   * locator("tbody").not("tr") -> //tbody[not(tr)]
+   */
+  not(expr: string): Locator {
+    return this.predicate(`not(${expr})`);
+  }
+
   hasText(text: string | RegExp, exact: boolean = false): Locator {
     let nextSegments = this.segments.slice();
     let tm: TextMatcher;
@@ -387,6 +410,12 @@ class Locator {
 
 export function locator(seed: string, root?: Document | Element): Locator {
   return Locator.create(seed, root);
+}
+
+export function interact(locator: Locator) {
+  return {
+    click: async () => ((await locator.getOne()) as HTMLElement).click(),
+  };
 }
 
 export type { Locator };

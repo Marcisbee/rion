@@ -1,13 +1,36 @@
 /**
- * Minimal benchmark harness with 2s timed execution.
+ * Benchmark harness with beforeEach / afterEach hooks.
+ *
+ * New signature:
+ *   bench(name, { setup, beforeEach, afterEach }, run)
+ *
+ * Behavior:
+ *   - setup() executed once per benchmark (may return any value used by hooks & run).
+ *   - For each warmup & measured iteration (iteration integer starts at 0 for warmup):
+ *       beforeEach?.(setupResult, iteration)
+ *       run(setupResult, iteration)
+ *       afterEach?.(setupResult, iteration)
+ *
+ * Timing:
+ *   - Warmup iterations are not part of measured stats.
+ *   - beforeEach / afterEach hook time is EXCLUDED from measured timing; only the core
+ *     code() execution duration is accumulated.
+ *
+ * Result message includes total iterations & timing stats (code time only).
  */
 
 type BenchSetup = () => any | Promise<any>;
-type BenchCode = (setupResult: any) => void | Promise<void>;
+type BenchIterationHook = (
+  setupResult: any,
+  iteration: number,
+) => any | Promise<any>;
+type BenchCode = (setupResult: any, iteration: number) => void | Promise<void>;
 
 interface BenchEntry {
   name: string;
-  setup: BenchSetup;
+  setup?: BenchSetup;
+  beforeEach?: BenchIterationHook;
+  afterEach?: BenchIterationHook;
   code: BenchCode;
 }
 
@@ -17,7 +40,7 @@ interface BenchResultMessage {
   warmupIterations: number;
   warmupTotalTimeMs: number;
   iterations: number;
-  totalTimeMs: number;
+  totalTimeMs: number; // Accumulated code() time only
   avgTimePerIterMs: number;
   opsPerSec: number;
 }
@@ -30,25 +53,59 @@ interface BenchErrorMessage {
 
 const benchList: BenchEntry[] = [];
 
-export function bench(name: string, setup: BenchSetup, code: BenchCode) {
-  benchList.push({ name, setup, code });
+/**
+ * Register benchmark.
+ *
+ * Example:
+ *   bench("my bench", {
+ *     setup: () => prepare(),
+ *     beforeEach: (ctx, i) => reset(ctx),
+ *     afterEach: (ctx, i) => verify(ctx),
+ *   }, (ctx) => doWork(ctx));
+ */
+export function bench(
+  name: string,
+  hooks: {
+    setup?: BenchSetup;
+    beforeEach?: BenchIterationHook;
+    afterEach?: BenchIterationHook;
+  },
+  code: BenchCode,
+) {
+  benchList.push({
+    name,
+    setup: hooks.setup,
+    beforeEach: hooks.beforeEach,
+    afterEach: hooks.afterEach,
+    code,
+  });
 }
 
-bench.exec = async (name: string): Promise<() => Promise<void>> => {
+/**
+ * Prepare execution context for a single benchmark (setup executed once).
+ * Returns the entry and its setupResult so caller can orchestrate timing precisely.
+ */
+bench.exec = async (
+  name: string,
+): Promise<{ entry: BenchEntry; setupResult: any }> => {
   const entry = benchList.find((b) => b.name === name);
   if (!entry) throw new Error(`No bench found: ${name}`);
-  const setupResult = await entry.setup();
-  return async () => {
-    await entry.code(setupResult);
-  };
+
+  let setupResult: any;
+  if (entry.setup) {
+    setupResult = await entry.setup();
+  }
+
+  return { entry, setupResult };
 };
 
 async function runSingleIframe(name: string) {
+  // Timed duration constant kept for potential future expansion.
   const DURATION_MS = 2000;
 
-  let runner: () => Promise<void>;
+  let execResult: { entry: BenchEntry; setupResult: any };
   try {
-    runner = await bench.exec(name);
+    execResult = await bench.exec(name);
   } catch (err: any) {
     const errorMsg: BenchErrorMessage = {
       type: "BENCHMARK_ERROR",
@@ -58,29 +115,56 @@ async function runSingleIframe(name: string) {
     window.parent.postMessage(errorMsg, "*");
     return;
   }
+  const { entry, setupResult } = execResult;
 
-  // Fixed warmup: run exactly 10 iterations (not timed)
+  // Warmup phase (fixed count, not included in measured stats)
+  const WARMUP_COUNT = 5;
   const warmupStart = performance.now();
-  for (let w = 0; w < 10; w++) {
-    await runner();
+  for (let w = 0; w < WARMUP_COUNT; w++) {
+    // Warmup includes hooks but not part of measured totals
+    if (entry.beforeEach) await entry.beforeEach(setupResult, w);
+    await entry.code(setupResult, w);
+    if (entry.afterEach) await entry.afterEach(setupResult, w);
   }
   const warmupTotalTimeMs = performance.now() - warmupStart;
 
-  // Timed benchmark phase (2s)
+  // Measured phase (exclude beforeEach / afterEach hook time)
   let iterations = 0;
-  const start = performance.now();
+  let measuredCodeTotalMs = 0;
+  const measuredStartWall = performance.now();
   while (true) {
-    await runner();
+    const iterationNumber = WARMUP_COUNT + iterations;
+
+    // Run beforeEach (not timed)
+    if (entry.beforeEach) await entry.beforeEach(setupResult, iterationNumber);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    document.body.offsetHeight;
+
+    const codeStart = performance.now();
+    await entry.code(setupResult, iterationNumber);
+    const codeEnd = performance.now();
+
+    // Run afterEach (not timed)
+    if (entry.afterEach) await entry.afterEach(setupResult, iterationNumber);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    document.body.offsetHeight;
+
+    measuredCodeTotalMs += codeEnd - codeStart;
     iterations++;
+
     const now = performance.now();
-    if (now - start >= DURATION_MS) {
-      const totalTimeMs = now - start;
+
+    // Current logic: stop after reaching a minimum iteration threshold.
+    // If desired, switch to time-based by uncommenting duration check.
+    if (iterations >= 10) {
+      // if (now - measuredStartWall >= DURATION_MS) {
+      const totalTimeMs = measuredCodeTotalMs; // Only code time, excluding hooks
       const avgTimePerIterMs = iterations === 0 ? 0 : totalTimeMs / iterations;
       const opsPerSec = iterations / (totalTimeMs / 1000);
       const result: BenchResultMessage = {
         type: "BENCHMARK_RESULT",
         name,
-        warmupIterations: 10,
+        warmupIterations: WARMUP_COUNT,
         warmupTotalTimeMs,
         iterations,
         totalTimeMs,
@@ -102,8 +186,12 @@ async function runController() {
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("sandbox", "allow-scripts");
-  iframe.width = "200";
-  iframe.height = "100";
+  iframe.width = "100%";
+  iframe.height = "100%";
+  iframe.style.top = "0px";
+  iframe.style.left = "0px";
+  iframe.style.position = "absolute";
+  iframe.style.border = "none";
   document.body.appendChild(iframe);
 
   const results: BenchResultMessage[] = [];
@@ -142,18 +230,16 @@ async function runController() {
     });
 
   try {
-    // Execute each benchmark (simple gray prefix like src/bench.ts)
     for (const entry of entries) {
       console.log("%c- " + entry.name, "color:gray;");
       await runOne(entry);
     }
 
-    // Sort results by throughput descending (ops/sec)
+    // Sort by throughput descending.
     results.sort((a, b) => b.opsPerSec - a.opsPerSec);
 
     console.log("");
 
-    // Collapsed per-benchmark groups similar to src/bench.ts formatting
     for (const r of results) {
       const headerStyle = "font-weight:bold;";
       console.groupCollapsed(`%c${r.name}`, headerStyle);
@@ -162,7 +248,7 @@ async function runController() {
           r.avgTimePerIterMs.toExponential(3)
         } | iterations: ${r.iterations.toLocaleString()}`,
       );
-      // Additional raw metrics (uncomment if desired)
+      // Uncomment for raw metrics:
       // console.log(
       //   `total: ${r.totalTimeMs.toFixed(2)} ms | warmup iters: ${r.warmupIterations} | warmup total: ${r.warmupTotalTimeMs.toFixed(2)} ms`,
       // );
@@ -188,6 +274,7 @@ export type {
   BenchCode,
   BenchEntry,
   BenchErrorMessage,
+  BenchIterationHook,
   BenchResultMessage,
   BenchSetup,
 };
